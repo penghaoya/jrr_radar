@@ -1,73 +1,87 @@
-name: Docker Validate
+name: Build And Release Docker Archives
 
 on:
   push:
-    branches:
-      - main
-      - master
-    paths:
-      - .github/workflows/build.yml
-      - .dockerignore
-      - Dockerfile
-      - docker-entrypoint.sh
-      - radar/app/**
+    branches: [ main, master ]
+    tags: [ "v*" ]
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
     paths:
-      - .github/workflows/build.yml
-      - .dockerignore
-      - Dockerfile
-      - docker-entrypoint.sh
-      - radar/app/**
+      - ".github/workflows/build.yml"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "docker-entrypoint.sh"
+      - "radar/app/**"
   workflow_dispatch:
 
 concurrency:
-  group: docker-validate-${{ github.workflow }}-${{ github.ref }}
+  group: docker-archives-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  IMAGE_NAME: jrr-radar-ci
+  IMAGE_NAME: jrr_radar
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    name: validate-amd64
-    runs-on: ubuntu-24.04
+  build-archives:
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runs_on: ubuntu-24.04
+            archive_suffix: linux-amd64
+            image_tag: linux-amd64
+          - runs_on: ubuntu-24.04-arm
+            archive_suffix: linux-arm64
+            image_tag: linux-arm64
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Build Docker image
         run: |
           docker build \
             --file ./Dockerfile \
-            --tag ${IMAGE_NAME}:amd64 \
+            --tag ${IMAGE_NAME}:${{ matrix.image_tag }} \
             .
 
-      - name: Verify Python compatibility path
+      - name: Export Docker archive
         run: |
-          docker run --rm \
-            ${IMAGE_NAME}:amd64 \
-            /opt/python-3.10.13/bin/python -c "import sys; print(sys.executable)"
+          docker save \
+            --output /tmp/${IMAGE_NAME}-${{ matrix.archive_suffix }}.tar \
+            ${IMAGE_NAME}:${{ matrix.image_tag }}
 
-      - name: Verify runtime dependencies
-        run: |
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/mnt/data2/DPS/WorkDir/EXE/" \
-            ${IMAGE_NAME}:amd64 \
-            /opt/python-3.10.13/bin/python -c "import sys; sys.path.insert(0, '/mnt/data2/DPS/WorkDir/EXE/radar/app'); import cinrad, cartopy, numpy, psycopg2, loguru, metpy, vanadis, cinrad_data; print('imports-ok')"
+      - name: Compress Docker archive
+        run: gzip -f -9 /tmp/${IMAGE_NAME}-${{ matrix.archive_suffix }}.tar
 
-      - name: Smoke test with project entry script
-        run: |
-          docker run --rm \
-            -v "${GITHUB_WORKSPACE}:/mnt/data2/DPS/WorkDir/EXE/" \
-            --entrypoint /usr/bin/bash \
-            ${IMAGE_NAME}:amd64 \
-            /mnt/data2/DPS/WorkDir/EXE/radar/app/run.radar.sh \
-            /mnt/data2/DPS/WorkDir/EXE/radar/app/radar_single.py \
-            /mnt/data2/DPS/WorkDir/EXE/radar/app/site_single_info.json
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-archive-${{ matrix.archive_suffix }}
+          path: /tmp/${{ env.IMAGE_NAME }}-${{ matrix.archive_suffix }}.tar.gz
+          compression-level: 0
+
+  release:
+    needs: build-archives
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download built archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: docker-archive-*
+          path: ./release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./release-assets/*.tar.gz
+          generate_release_notes: true
