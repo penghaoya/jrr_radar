@@ -1,0 +1,73 @@
+name: Docker Validate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - .github/workflows/build.yml
+      - .dockerignore
+      - Dockerfile
+      - docker-entrypoint.sh
+      - radar/app/**
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - .github/workflows/build.yml
+      - .dockerignore
+      - Dockerfile
+      - docker-entrypoint.sh
+      - radar/app/**
+  workflow_dispatch:
+
+concurrency:
+  group: docker-validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: jrr-radar-ci
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate-amd64
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --file ./Dockerfile \
+            --tag ${IMAGE_NAME}:amd64 \
+            .
+
+      - name: Verify Python compatibility path
+        run: |
+          docker run --rm \
+            ${IMAGE_NAME}:amd64 \
+            /opt/python-3.10.13/bin/python -c "import sys; print(sys.executable)"
+
+      - name: Verify runtime dependencies
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/mnt/data2/DPS/WorkDir/EXE/" \
+            ${IMAGE_NAME}:amd64 \
+            /opt/python-3.10.13/bin/python -c "import sys; sys.path.insert(0, '/mnt/data2/DPS/WorkDir/EXE/radar/app'); import cinrad, cartopy, numpy, psycopg2, loguru, metpy, vanadis, cinrad_data; print('imports-ok')"
+
+      - name: Smoke test with project entry script
+        run: |
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/mnt/data2/DPS/WorkDir/EXE/" \
+            --entrypoint /usr/bin/bash \
+            ${IMAGE_NAME}:amd64 \
+            /mnt/data2/DPS/WorkDir/EXE/radar/app/run.radar.sh \
+            /mnt/data2/DPS/WorkDir/EXE/radar/app/radar_single.py \
+            /mnt/data2/DPS/WorkDir/EXE/radar/app/site_single_info.json
