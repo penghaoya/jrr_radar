@@ -1,0 +1,7 @@
+interface:
+  display_name: "算法镜像构建"
+  short_description: "整理算法镜像构建运行步骤与通用注意事项"
+  default_prompt: "使用 $algorithm-image-builder 为这个算法项目整理镜像构建步骤、运行步骤和通用注意事项。"
+
+policy:
+  allow_implicit_invocation: true

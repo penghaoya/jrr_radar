@@ -1,0 +1,81 @@
+name: docker-release-tarballs
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths:
+      - Dockerfile
+      - .github/workflows/build.yml
+      - YOUR_PROJECT_PATH/**
+  pull_request:
+    paths:
+      - Dockerfile
+      - .github/workflows/build.yml
+      - YOUR_PROJECT_PATH/**
+  workflow_dispatch:
+
+concurrency:
+  group: docker-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build -t YOUR_IMAGE_NAME:${{ matrix.arch }} .
+
+      - name: Export image
+        run: |
+          mkdir -p dist
+          docker save YOUR_IMAGE_NAME:${{ matrix.arch }} -o dist/YOUR_IMAGE_NAME-linux-${{ matrix.arch }}.tar
+          gzip -f dist/YOUR_IMAGE_NAME-linux-${{ matrix.arch }}.tar
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-${{ matrix.arch }}
+          path: dist/YOUR_IMAGE_NAME-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: docker-image-*
+          merge-multiple: true
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*.tar.gz
+          generate_release_notes: true

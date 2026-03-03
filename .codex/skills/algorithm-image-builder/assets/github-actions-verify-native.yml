@@ -1,0 +1,46 @@
+name: docker-validate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Dockerfile
+      - .github/workflows/build.yml
+      - YOUR_PROJECT_PATH/**
+  pull_request:
+    paths:
+      - Dockerfile
+      - .github/workflows/build.yml
+      - YOUR_PROJECT_PATH/**
+  workflow_dispatch:
+
+concurrency:
+  group: docker-validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: validate-${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build \
+            -t YOUR_IMAGE_NAME:${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }} \
+            .
